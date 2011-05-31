@@ -1,9 +1,22 @@
 #!/bin/bash
 
 build() {
+  DATADIR="/usr/share"
+  PLYMOUTH_THEME_NAME="$(/usr/sbin/plymouth-set-default-theme)"
+  PLYMOUTH_MODULE_NAME="$(grep "ModuleName *= *" ${DATADIR}/plymouth/themes/${PLYMOUTH_THEME_NAME}/${PLYMOUTH_THEME_NAME}.plymouth | sed 's/ModuleName *= *//')"
+  
   add_binary "/bin/plymouth"
   add_binary "/sbin/plymouthd"
+  add_binary "/bin/plymouthd"
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/text.so"
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/details.so"
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/${PLYMOUTH_MODULE_NAME}.so"
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/renderers/drm.so"
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/renderers/x11.so" 
+  add_binary "${PLYMOUTH_PLUGIN_PATH}/renderers/frame-buffer.so" 
   add_binary "$(readlink -e /lib/libnss_files.so.2)"
+  add_file "${DATADIR}/plymouth/themes/text/text.plymouth"
+  add_file "${DATADIR}/plymouth/themes/details/details.plymouth"
   add_file "/lib/libnss_files.so.2" 
   add_file "/etc/plymouth/plymouthd.conf"
   add_file "/etc/passwd"
@@ -11,6 +24,20 @@ build() {
   add_file "/etc/nsswitch.conf"
   add_file "/usr/share/plymouth/themes/text/text.plymouth"
   add_file "/usr/share/plymouth/themes/details/details.plymouth"
+
+  if [ ! -f ${PLYMOUTH_PLUGIN_PATH}/${PLYMOUTH_MODULE_NAME}.so ]; then
+    echo "The default plymouth plugin (${PLYMOUTH_MODULE_NAME}) doesn't exist" > /dev/stderr
+    exit 1
+  fi
+
+  if [ -d ${DATADIR}/plymouth/themes/${PLYMOUTH_THEME_NAME} ]; then
+    for x in ${DATADIR}/plymouth/themes/${PLYMOUTH_THEME_NAME/* ; do
+      [ ! -f "$x" ] && break
+  add_file $x
+    done
+  fi
+
+  SCRIPT='plymouth'
 }
 
 helpmsg() {
