@@ -86,7 +86,10 @@ add_module() { # {{{
         -name "$module.ko*"  -print0)
   fi
 
-  [[ -z "$modpath" ]] && return 1
+  if [[ -z "$modpath" ]]; then
+    error "Module not found: $module"
+    return 1
+  fi
 
   __add_file "${modpath#$basedir}" "$modpath" 644 || return 1
 
@@ -135,7 +138,7 @@ add_binary() { # {{{
 
   if ! "$ld_so" --verify "$binary" &>/dev/null; then
     # this isn't a binary!
-    __add_file "${binary#$basedir}" "$binary" "$mode"
+    __add_file "$dest" "$binary" "$mode"
     return $? # return with __add_file's return val
   fi
 
@@ -187,6 +190,19 @@ use_hookscript() { # {{{
   __add_file "/hooks/$script" "$basedir$_sharedir/hooks/$script" 755
 } # }}}
 
+use_mounthook() { # {{{
+  # specifies that a builder should install a custom mount handler.
+
+  local mounthook=${1:-$builder}
+
+  if [[ ! -f $basedir$_sharedir/mount/$mounthook ]]; then
+    error "unable to find mount hook: $mounthook"
+    return 1
+  fi
+
+  __add_file "/mount/$mounthook" "$basedir$_sharedir/mount/$mounthook" 755
+} # }}}
+
 add_checked_modules() { # {{{
   # add a class of modules, as a dir relative to /lib/modules/$kernver/kernel.
   # if you need to block addition of modules, you can add glob patterns to the
@@ -210,6 +226,9 @@ add_checked_modules() { # {{{
   [[ -s "$autodetect_cache" && -z "$NOAUTO" ]] &&
     IFS=$'\n' read -rd '' -a mods < <(grep -xFf <(printf '%s\n' "${mods[@]//-/_}") "$autodetect_cache")
 
+  # return value based on the whether or not modules _could_ be added
+  ret=${#mods[*]}
+
   for mod in "${mods[@]}"; do
     # check for filter match
     for filter in "${MODFILTER[@]}"; do
@@ -218,6 +237,8 @@ add_checked_modules() { # {{{
 
     add_module "$mod" && (( ++ret ))
   done
+
+  (( ret == 0 )) && plain "${YELLOW}WARNING:$NC no modules added"
 
   # return 0 on modules added, else 1
   return $(( ! ret ))

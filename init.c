@@ -215,7 +215,7 @@ done:
 
 static ssize_t read_child_response(char **argv, char *buffer) { /* {{{ */
   int statloc, pfds[2];
-  ssize_t total, len;
+  ssize_t len, total = 0;
   char readbuf[BUFSIZ];
   pid_t pid;
 
@@ -243,13 +243,12 @@ static ssize_t read_child_response(char **argv, char *buffer) { /* {{{ */
     close(pfds[1]);
 
     execv(argv[0], argv);
-    fprintf(stderr, "exec: %s: %s", argv[0], strerror(errno));
+    fprintf(stderr, "exec: %s: %s\n", argv[0], strerror(errno));
     _exit(errno);
   }
 
   close(pfds[1]); /* unused by parent */
 
-  total = 0;
   memset(buffer, 0, BUFSIZ);
   while (1) {
     len = read(pfds[0], readbuf, BUFSIZ);
@@ -271,11 +270,12 @@ static ssize_t read_child_response(char **argv, char *buffer) { /* {{{ */
     memcpy(&buffer[total], readbuf, len);
     total += len;
   }
+
   close(pfds[0]);
 
   waitpid(pid, &statloc, 0);
   if (WIFEXITED(statloc) && WEXITSTATUS(statloc) != 0) {
-    err("hook `%s' exited with status %d\n", argv[0], WEXITSTATUS(statloc));
+    err("`%s' exited with status %d\n", argv[0], WEXITSTATUS(statloc));
     return -(WEXITSTATUS(statloc));
   }
 
@@ -432,10 +432,10 @@ static void mount_setup(void) { /* {{{ */
   mount("run", "/run", "tmpfs", TMPFS_FLAGS, "mode=0755,size=10M");
 
   /* ENODEV returned on non-existant FS */
-  ret = mount("udev", "/dev", "devtmpfs", MS_NOSUID, "mode=0755,size=10M");
+  ret = mount("udev", "/dev", "devtmpfs", MS_NOSUID, "mode=0755");
   if (ret == -1 && errno == ENODEV) {
     /* devtmpfs not available, use standard tmpfs */
-    mount("udev", "/dev", "tmpfs", MS_NOSUID, "mode=0755,size=10M");
+    mount("udev", "/dev", "tmpfs", MS_NOSUID, "mode=0755,size=1024k");
 
     /* create necessary nodes */
     mknod("/dev/console", S_IFCHR|0600, makedev(5, 1));
@@ -470,18 +470,17 @@ static void disable_modules(void) { /* {{{ */
   }
 
   /* ensure parent dirs exist */
-  mkdir("/etc", 0755);
-  mkdir("/etc/modprobe.d", 0755);
+  mkdir("/run/modprobe.d", 0755);
 
-  fp = fopen("/etc/modprobe.d/initcpio.conf", "w");
+  fp = fopen("/run/modprobe.d/initcpio.conf", "w");
   if (!fp) {
-    perror("error: /etc/modprobe.d/initcpio.conf");
+    perror("error: /run/modprobe.d/initcpio.conf");
     return;
   }
 
   var = strdup(getenv("disablemodules"));
   for (tok = strtok(var, ","); tok; tok = strtok(NULL, ",")) {
-    fprintf(fp, "install %s /bin/false\n", tok);
+    fprintf(fp, "blacklist %s\n", tok);
   }
 
   fclose(fp);
@@ -655,6 +654,7 @@ static void run_hooks(void) { /* {{{ */
   char *hook;
   FILE *fp;
 
+  putenv("PATH=/usr/sbin:/usr/bin:/sbin:/bin");
   setenv("FDINIT", TOSTRING(CHILD_WRITE_FD), 1);
   line[0] = '\0';
 
@@ -832,8 +832,32 @@ static void try_create_root(void) { /* {{{ */
 } /* }}} */
 
 static int mount_root(void) { /* {{{ */
-  char *root, *fstype, *data;
+  char *mount_handler, *root, *fstype, *data;
   int ret = 1;
+
+  mount_handler = getenv("mount_handler");
+  if (mount_handler != NULL) {
+    struct stat rootdev, newrootdev;
+    char response[BUFSIZ], handlerpath[PATH_MAX];
+    char *argv[] = { handlerpath, NULL };
+
+    snprintf(handlerpath, PATH_MAX, "/mount/%s", mount_handler);
+
+    if (!bbox_installed) { /* unlikely */
+      char *bboxinstall[] = { BUSYBOX, "--install", NULL };
+      forkexecwait(bboxinstall);
+      bbox_installed = 1;
+    }
+
+    if (read_child_response(argv, response) > 0) {
+      parse_envstring(response);
+    }
+
+    stat("/", &rootdev);
+    stat(NEWROOT, &newrootdev);
+
+    return !(rootdev.st_dev = newrootdev.st_dev);
+  }
 
   root = getenv("root");
   data = getenv("rootflags");
