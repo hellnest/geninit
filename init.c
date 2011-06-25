@@ -18,7 +18,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/klog.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -39,7 +38,6 @@
 #define TOSTRING(x)     QUOTE(x)
 
 #define CMDLINE_SIZE    257       /* 256 max cmdline len + NULL */
-#define TMPFS_FLAGS     MS_NOEXEC|MS_NODEV|MS_NOSUID
 
 #define CHILD_WRITE_FD  6
 
@@ -427,12 +425,12 @@ static void mount_setup(void) { /* {{{ */
   int ret;
 
   /* setup basic filesystems */
-  mount("proc", "/proc", "proc", TMPFS_FLAGS, NULL);
-  mount("sys", "/sys", "sysfs", TMPFS_FLAGS, NULL);
-  mount("run", "/run", "tmpfs", TMPFS_FLAGS, "mode=0755,size=10M");
+  mount("proc", "/proc", "proc", MS_NOEXEC|MS_NODEV|MS_NOSUID, NULL);
+  mount("sys", "/sys", "sysfs", MS_NOEXEC|MS_NODEV|MS_NOSUID, NULL);
+  mount("run", "/run", "tmpfs", MS_NODEV|MS_NOSUID, "mode=0755,size=10M");
 
   /* ENODEV returned on non-existant FS */
-  ret = mount("udev", "/dev", "devtmpfs", MS_NOSUID, "mode=0755");
+  ret = mount("udev", "/dev", "devtmpfs", MS_NOSUID, "mode=0755,size=1024k");
   if (ret == -1 && errno == ENODEV) {
     /* devtmpfs not available, use standard tmpfs */
     mount("udev", "/dev", "tmpfs", MS_NOSUID, "mode=0755,size=1024k");
@@ -459,32 +457,6 @@ static void put_cmdline(void) { /* {{{ */
   }
 
   fclose(fp);
-} /* }}} */
-
-static void disable_modules(void) { /* {{{ */
-  char *tok, *var;
-  FILE *fp;
-
-  if (getenv("disablemodules") == NULL) {
-    return;
-  }
-
-  /* ensure parent dirs exist */
-  mkdir("/run/modprobe.d", 0755);
-
-  fp = fopen("/run/modprobe.d/initcpio.conf", "w");
-  if (!fp) {
-    perror("error: /run/modprobe.d/initcpio.conf");
-    return;
-  }
-
-  var = strdup(getenv("disablemodules"));
-  for (tok = strtok(var, ","); tok; tok = strtok(NULL, ",")) {
-    fprintf(fp, "blacklist %s\n", tok);
-  }
-
-  fclose(fp);
-  free(var);
 } /* }}} */
 
 static void launch_udev(void) { /* {{{ */
@@ -628,26 +600,6 @@ static void disable_hooks(void) { /* {{{ */
   free(list);
 } /* }}} */
 
-static void set_kloglevel(void) { /* {{{ */
-  char *level;
-  int ret;
-
-  level = getenv("loglevel");
-  if (!level) {
-    return;
-  }
-
-  if (strlen(level) > 1 || *level < '1' || *level > '8') {
-    err("invalid log level: %s\n", level);
-    return;
-  }
-
-  ret = klogctl(8, NULL, *level - 48);
-  if (ret != 0) {
-    perror("klogctl");
-  }
-} /* }}} */
-
 static void run_hooks(void) { /* {{{ */
   char *bboxinstall[] = { BUSYBOX, "--install", NULL };
   char line[PATH_MAX];
@@ -698,15 +650,6 @@ static void run_hooks(void) { /* {{{ */
     }
   }
 
-} /* }}} */
-
-static void check_for_break(void) { /* {{{ */
-  if (getenv("break") == NULL) {
-    return;
-  }
-
-  msg("break requested. type 'exit' or 'logout' to resume\n");
-  start_rescue_shell();
 } /* }}} */
 
 static int wait_for_root(void) { /* {{{ */
@@ -975,14 +918,16 @@ int main(int argc, char *argv[]) {
 
   mount_setup();                /* create early tmpfs mountpoints */
   put_cmdline();                /* parse cmdline and set environment */
-  disable_modules();            /* blacklist modules passed in on cmdline */
   launch_udev();                /* try to launch udev */
   load_extra_modules();         /* load modules passed in on cmdline */
   trigger_udev_events();        /* read and process uevent queue */
   disable_hooks();              /* delete hooks specified on cmdline */
-  set_kloglevel();              /* set user specified loglevel */
   run_hooks();                  /* run remaining hooks */
-  check_for_break();            /* did the user request a shell? */
+
+  if (getenv("break") != NULL) {
+    msg("break requested. type 'exit' or 'logout' to resume\n");
+    start_rescue_shell();
+  }
 
   if (wait_for_root() != 0) {
     try_create_root();          /* ensure that root shows up */

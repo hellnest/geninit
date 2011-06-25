@@ -46,6 +46,13 @@ declare -i dryrun=0
 declare -i savebuildroot=0
 declare -i verbose=0
 
+# colors
+declare NC=
+declare BOLD=
+declare GREEN=
+declare RED=
+declare YELLOW=
+
 declare kernver=$(uname -r)
 declare basedir=
 declare config=
@@ -54,23 +61,25 @@ declare ocompress=
 declare preset=
 declare skipbuilders=
 
+unset GREP_OPTIONS # i hate you
+
 # -------------------------- #
 ##  general util functions  ##
 # -------------------------- #
 
 plain() { # {{{
   local mesg=$1; shift
-  printf "$BOLD    $mesg$NC\n" "$@" >&2
+  printf "$BOLD    $mesg$NC\n" "$@" >&1
 } # }}}
 
 msg() { # {{{
   local mesg=$1; shift
-  printf "$GREEN==>$NC$BOLD $mesg$NC\n" "$@" >&2
+  printf "$GREEN==>$NC$BOLD $mesg$NC\n" "$@" >&1
 } # }}}
 
 msg2() { # {{{
   local mesg=$1; shift
-  printf "$BLUE  ->$NC$BOLD $mesg$NC\n" "$@" >&2
+  printf "$BLUE  ->$NC$BOLD $mesg$NC\n" "$@" >&1
 } # }}}
 
 warning() { # {{{
@@ -238,6 +247,7 @@ __build_image() { # {{{
   fi
 
   (( dryrun )) && msg "Starting dry run: %s" "$kernver" || msg "Starting build: %s" "$kernver"
+  (( verbose )) && msg2 "using config file: %s" "$basedir$config"
 
   # we always need the linker
   file=$(readlink -e "$ld_so")
@@ -247,7 +257,8 @@ __build_image() { # {{{
 
   # add extra modules from config
   for mod in ${modules[@]}; do
-    add_module "$mod" || (( ++errors ))
+    add_module "$mod"
+    [[ $? = @(0|$EEXIST) ]] || (( ++errors ))
   done
 
   # add extra files from config
@@ -293,7 +304,7 @@ __build_image() { # {{{
     msg "Generating module dependencies"
     depmod -b "$buildroot" "$kernver" || (( ++errors ))
     # trim excess depmod files
-    rm "$buildroot$moduledir"/modules.!(dep|alias|symbols)
+    rm "$buildroot$moduledir"/modules.!(@(dep|alias|symbols).bin)
   fi
 
   { # create delicious config
@@ -404,7 +415,7 @@ __build_preset() { # {{{
 } # }}}
 
 __kmodinfo() { # {{{
-  modinfo -0k $kernver "$@"
+  modinfo -b "$basedir" -0k $kernver "$@"
 } # }}}
 
 __ldd() { # {{{

@@ -7,18 +7,18 @@ build() {
   fi
 
   # generate a list of modules from aliases in /sys/devices
-  find /sys/devices -name modalias -exec sort -u {} + |\
-    xargs modprobe -d "${basedir:-/}" --set-version "$kernver" -aR |\
+  find /sys/devices -name modalias -exec sort -u {} + |
+    xargs modprobe -d "${basedir:-/}" -S "$kernver" -aR |
     sort -u >>"$autodetect_cache"
 
-  if (( UID == 0 )) || [[ $(groups) == *disk* ]]; then
+  if (( UID == 0 )) || in_array 'disk' $(groups); then
     if ! findmnt -uno fstype ${basedir:-/} >>"$autodetect_cache"; then
       err "failed to detect root filesystem"
     fi
 
     if [[ -x /sbin/mdadm ]]; then
-      /sbin/mdadm -Esv /dev/[hrsv]d* /dev/ida/* /dev/cciss/* /dev/ataraid/* /dev/mapper/* |\
-        sed -n 's/.*level=\([^ ]\+\) .*/\1/p' |\
+      /sbin/mdadm -Esv /dev/[hrsv]d* /dev/{ida,cciss,ataraid,mapper}/* |
+        sed -n 's/.*level=\([^ ]\+\) .*/\1/p' |
         sed 's/\<raid[456]\>/raid456/g' | sort -u >>"$autodetect_cache"
     fi
   else

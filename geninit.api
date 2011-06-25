@@ -79,19 +79,14 @@ add_module() { # {{{
 
   module=${1%%.*}
 
-  if [[ -z "$basedir" ]]; then # fast path =)
-    read -rd '' modpath < <(__kmodinfo -n "$module" 2>/dev/null)
-  else # slow path =(
-    read -rd '' modpath < <(find "$basedir$moduledir/kernel" -type f
-        -name "$module.ko*"  -print0)
-  fi
-
+  read -rd '' modpath < <(__kmodinfo -n "$module" 2>/dev/null)
   if [[ -z "$modpath" ]]; then
     error "Module not found: $module"
     return 1
   fi
 
-  __add_file "${modpath#$basedir}" "$modpath" 644 || return 1
+  __add_file "${modpath#$basedir}" "$modpath" 644
+  [[ $? = @(0|$EEXIST) ]] || return 1
 
   # grab firmware
   IFS=',' read -rd '' -a firmware < <(__kmodinfo -F firmware "$modpath")
@@ -136,14 +131,10 @@ add_binary() { # {{{
   dest=${2:-$binary}
   mode=$(stat -c %a "$binary")
 
-  if ! "$ld_so" --verify "$binary" &>/dev/null; then
-    # this isn't a binary!
-    __add_file "$dest" "$binary" "$mode"
-    return $? # return with __add_file's return val
-  fi
+  # the file itself
+  __add_file "$dest" "$binary" "$mode"
 
-  # the binary itself
-  __add_file "${dest#$basedir}" "${binary#$basedir}" 755 || return 1
+  "$ld_so" --verify "$binary" &>/dev/null || return # not a binary!
 
   # resolve sodeps
   regex='^[[:space:]]*[^/].+ => (.*) \(.*\)'
@@ -217,9 +208,8 @@ add_checked_modules() { # {{{
   # find modules by class (e.g. drivers/ata)
   pushd "$basedir$moduledir/kernel" &>/dev/null
   while read -rd '' mod; do
-    mod=${mod##*/}
     mods+=("${mod%%.*}")
-  done < <(find "$@" -type f -name '*.ko*' -print0 2>/dev/null)
+  done < <(find "$@" -type f -name '*.ko*' -printf '%f\0' 2>/dev/null)
   popd &>/dev/null
 
   # only add what autodetect found if we have a module cache
